@@ -1,6 +1,6 @@
 # Team Asteroid :rock:
 ## Deadlines
-- Writing Program (Internal): **:warning: 1 February 2024**
+- Writing Program (Internal): **:warning: 7 February 2024**
 
 ## :book: [Overview and Rulebook of the Competition](https://astro-pi.org/mission-space-lab/rulebook)
 ## :books: [Creator Guide](https://projects.raspberrypi.org/en/projects/mission-space-lab-creator-guide) - a step-by-step guide for an example program you should use as a starting point, but look beyond to improve your program.
