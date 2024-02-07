@@ -28,6 +28,7 @@ BF_MATCHER_TYPE = cv2.NORM_HAMMING
 
 # Image data
 OPENCV_RESOLUTION = (3040, 4056, 3)
+GROUND_SAMPLE_DISTANCE = 12648 / 100000 # Kilometres per pixel = cm per pixel / cm per km
 
 """Our classes"""
 class TimedPhoto:
@@ -103,24 +104,17 @@ class PhotoComparer:
 
         return totalDistance / len(matches)
 
+    def getDistanceKilometres(self):
+        """Get the distance between the two photos in KM"""
+        return self.getDistance() * GROUND_SAMPLE_DISTANCE
+
     def getTimeDifference(self):
         """Return the difference in time taken between the two photos in seconds."""
         return self.photo2.time - self.photo1.time
 
-    # def lazyLoadDistance(self):
-    #     """Calculate the distance between the two pictures if this has not already been done, and return it as a floating-point number of pixels."""
-    #     if self.distance is not None:
-    #         return self.distance
-    #
-    #     result = self.getDistance()
-    #
-    #     self.distance = result
-    #     return result
-
-
     def getSpeed(self):
         """Get the speed of the ISS between the 2 photos in kilometres per second."""
-        return self.getDistance() / self.getTimeDifference()
+        return self.getDistanceKilometres() / self.getTimeDifference()
 
     def __repr__(self):
         """Display this photo comparer as text for use in the console."""
@@ -129,20 +123,35 @@ class PhotoComparer:
         return f"PhotoComparer(time difference = {time}s, distance difference = {distance}px, speed = {distance/time}px/s)"
 
 """Our functions"""
+def writeResult(speedKmps: float):
+    """Write the result speed in km/s to the result.txt file, with a precision of 5sf"""
+
+    # Format the speedKmps to have a precision
+    # of 5 significant figures
+    speedKmpsFormatted = "{:.4f}".format(speedKmps)
+
+    # Write the formatted string to the file
+    filePath = "result.txt"
+    with open(filePath, 'w') as file:
+        file.write(speedKmpsFormatted)
+
+    print(f"Speed {speedKmpsFormatted} written to {filePath}")
 
 """Main entrypoint"""
 # TODO: Timing
 lastPhoto = TimedPhoto(piCam)
+# Sum of speeds so far in pixels per second
+totalSpeed = 0
 time.sleep(1)
 for i in range(5):
     print("Iteration", i+1)
-    # print("\tthisPhoto = ...")
     thisPhoto = TimedPhoto(piCam)
-    # print("\tcomparer = ...")
     comparer = PhotoComparer(lastPhoto, thisPhoto)
-    # print("\t...getSpeed()")
-    print("Speed (px/s):", comparer.getSpeed())
-    # print("\tlastPhoto = ...")
+    totalSpeed += comparer.getSpeed()
     lastPhoto = TimedPhoto(piCam)
     time.sleep(1)
-# TODO: Write to file
+
+# Mean is sum of all speeds / num iterations
+meanSpeed = totalSpeed / 5
+
+writeResult(meanSpeed)
