@@ -18,11 +18,6 @@ from picamera import PiCamera
 piCam = PiCamera()
 piCam.resolution = (4056, 3040)
 
-# Allows image capture to numpy arrays
-# from picamera.array import PiRGBArray
-
-count = 1 # TODO: Remove
-
 """Constants"""
 # Experiment information
 EXPERIMENT_DURATION_CONSERVATIVE = timedelta(minutes=5) # "conservative" means an overestimate
@@ -31,8 +26,9 @@ ITERATION_DURATION_MINIMUM = timedelta(seconds=10) # How long minimum to leave b
 # Files
 from pathlib import Path
 baseFolder = Path(__file__).parent.resolve()
-CAPTURE_FILE_PATH = baseFolder / "tmpCapture.png" # Temporary file to save photo captures to
-RESULT_FILE_PATH = baseFolder / "result.txt"
+# String paths are supported by all the functions used, but not the path datatype.
+CAPTURE_FILE_PATH = str(baseFolder / "tmpCapture.png") # Temporary file to save photo captures to
+RESULT_FILE_PATH = str(baseFolder / "result.txt")
 
 # Computer Vision: ORB
 ORB_FEATURE_NUMBER = 500
@@ -47,8 +43,8 @@ class TimedPhoto:
     """A photo stored in OpenCV format with a timestamp."""
     def __init__(self, camera: PiCamera):
         """Take a new photo and save an array representation of it in memory with its timestamp."""
-        camera.capture(str(CAPTURE_FILE_PATH))
-        self.array = cv2.imread(str(CAPTURE_FILE_PATH))
+        camera.capture(CAPTURE_FILE_PATH)
+        self.array = cv2.imread(CAPTURE_FILE_PATH)
         self.applyProcessing()
 
         self.time = time.time()
@@ -88,31 +84,11 @@ class PhotoComparer:
         bruteForce = cv2.BFMatcher.create(BF_MATCHER_TYPE, crossCheck=True)
 
         # Get information about the features visible
-
         keypoints1, descriptors1 = orb.detectAndCompute(self.photo1.array, self.photo1.mask) # (r1 < 200) | (g1 < 200) | (b1 < 200)) # Ignore clouds in the mask.
         keypoints2, descriptors2 = orb.detectAndCompute(self.photo2.array, self.photo2.mask)
 
-        # # TODO: Delete
-
-        global count
-        cv2.imwrite(f"masked{count}.png", self.photo1.array)
-        count += 1
-
-        # Get matches across the 2 photos about the features.
+        # Get matches across the 2 photos between similar features.
         matches = bruteForce.match(descriptors1, descriptors2)
-        matches = sorted(matches, key=lambda x: x.distance)
-        # matches = matches[:20]
-
-        # # Use up to 100 most likely matches, thus removing some incorrect ones
-        # matches = matches[:100]
-
-        # TODO: Delete
-        match_img = cv2.drawMatches(self.photo1.array, keypoints1, self.photo2.array, keypoints2, matches[:100], None)
-        resize = cv2.resize(match_img, (1600, 600), interpolation=cv2.INTER_AREA)
-
-        # global count
-        cv2.imwrite(f"match{count}.png", resize)
-        count += 1
 
         # Return the mean distance between the photos for all of the matches
         # Create a 1D numpy array to store the distances, with the same length as the number of matches.
@@ -126,9 +102,9 @@ class PhotoComparer:
 
         # Mean distance = sum of distances / num matches.
         print("distances", distances, "len(matches)", len(matches))
-        # If there are 0 matches, a ZeroDivisionError will be thrown, effectively ignoring this frame.
+        # If there are 0 matches, a NaN (not-a-number) value will be returned, effectively ignoring this frame.
         if len(distances) == 0:
-            raise ZeroDivisionError()
+            return np.nan
         return np.nanmedian(distances)
 
     def getDistanceKilometres(self):
@@ -168,11 +144,10 @@ def writeResult(speedKmps: float):
     speedKmpsFormatted = "{:.4f}".format(speedKmps)
 
     # Write the formatted string to the file
-    filePath = "result.txt"
-    with open(filePath, 'w') as file:
+    with open(RESULT_FILE_PATH, 'w') as file:
         file.write(speedKmpsFormatted)
 
-    print(f"Speed {speedKmpsFormatted} written to {filePath}")
+    print(f"Speed {speedKmpsFormatted} written to {RESULT_FILE_PATH}")
 
 """Main entrypoint
 Inspired by https://projects.raspberrypi.org/en/projects/mission-space-lab-creator-guide/3"""
@@ -200,24 +175,21 @@ while(not validPhoto and datetime.now() < startLoopTime + EXPERIMENT_DURATION_CO
 
 # Run the following if a photo was successfully captured
 if(validPhoto):
-    # The sum of all of the speeds calculated for each iteration of the loop
-    totalSpeed = 0
-    # Number of times the loop has been run
-    numIterations = 0
+    # The speeds calculated for each iteration of the loop as a list
+    speeds = []
 
     # Run the main loop for 1 minute, while the current time is less than 1 minute after the start time.
     while startLoopTime < startTime + EXPERIMENT_DURATION_CONSERVATIVE:
-        print("Iteration", numIterations+1)
+        print("Next Iteration")
         try:
             thisPhoto = TimedPhoto(piCam)
             comparer = PhotoComparer(lastPhoto, thisPhoto)
-            totalSpeed += comparer.getSpeed()
+            speeds.append(comparer.getSpeed())
             lastPhoto = TimedPhoto(piCam)
 
             # Loop iteration must take 10s minimum to run, between photos.
             while datetime.now() < startLoopTime + ITERATION_DURATION_MINIMUM:
                 time.sleep(1)
-            numIterations += 1
         except Exception as error:
             # Allow keyboard interrupts to end the program properly.
             if type(error) == KeyboardInterrupt:
@@ -227,10 +199,13 @@ if(validPhoto):
         startLoopTime = datetime.now()
     # Out of the loop — stopping
 
-    # Mean is sum of all speeds / num iterations
-    meanSpeed = totalSpeed / numIterations
+    # Speeds recorded for each frame are saved in a numpy array.
+    speeds = np.array(speeds, dtype=float)
+    # Get median speed to write to file, ignoring not-a-number frames where no matches were found.
+    medianSpeed = np.nanmedian(speeds)
 
-    writeResult(meanSpeed)
+    print("median", medianSpeed, "mean", np.nanmean(speeds))
+    writeResult(medianSpeed)
 
 """Close open resources and clean up"""
 piCam.close()
