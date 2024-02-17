@@ -2,17 +2,23 @@
 # and Rotated BRIEF) Computer Vision algorithms
 
 """
-TODO: Write Description; check rules
+Our method includes:
+- Taking regular images with the camera
+- Identifying clouds in the photos
+- Using the ORB OpenCV algorithm to find matches between photos where there are no clouds
+- Therefore finding the distance between photos and speed of the ISS.
 """
-import numpy as np
 
-"""Imports and instantiation"""
-from datetime import datetime, timedelta
-import time
-import cv2
-import os
+"""Imports"""
+import numpy as np # NumPy
+import cv2 # OpenCV, installed as opencv-contrib-python-headless
+from datetime import datetime, timedelta # From Python Standard Library
+import time # From Python Standard Library, for waiting specific numbers of seconds
+import os # From Python Standard Library, only for deleting the tmpCapture.png file that is created
 
-# Import the picamera class
+"""Instantiation"""
+
+# Import the picamera class, to access the Astro Pi computer's camera
 from picamera import PiCamera
 # Instantiate it and set its resolution
 piCam = PiCamera()
@@ -20,13 +26,13 @@ piCam.resolution = (4056, 3040)
 
 """Constants"""
 # Experiment information
-EXPERIMENT_DURATION_CONSERVATIVE = timedelta(minutes=5) # "conservative" means an overestimate
+EXPERIMENT_DURATION_CONSERVATIVE = timedelta(minutes=9, seconds=30) # "conservative" means an underestimate, so the program does not run for too long
 ITERATION_DURATION_MINIMUM = timedelta(seconds=10) # How long minimum to leave between consecutive photos
 
 # Files
 from pathlib import Path
 baseFolder = Path(__file__).parent.resolve()
-# String paths are supported by all the functions used, but not the path datatype.
+# String paths are supported by all the functions used, but the path datatype isn't.
 CAPTURE_FILE_PATH = str(baseFolder / "tmpCapture.png") # Temporary file to save photo captures to
 RESULT_FILE_PATH = str(baseFolder / "result.txt")
 
@@ -45,21 +51,18 @@ class TimedPhoto:
         """Take a new photo and save an array representation of it in memory with its timestamp."""
         camera.capture(CAPTURE_FILE_PATH)
         self.array = cv2.imread(CAPTURE_FILE_PATH)
-        self.applyProcessing()
+        self.addMask()
 
         self.time = time.time()
 
-    def applyProcessing(self):
-        """Apply processing like removing clouds to this image to make it cleaner."""
+    def addMask(self):
+        """Make a mask to hide clouds from the image so only the land/sea is used to find ISS speed."""
         # Get blue, green, red channels
         b1, g1, r1 = cv2.split(self.array)
 
         # Hide clouds with a mask
         self.mask = np.zeros(self.array.shape[:2], dtype=np.uint8)
         self.mask[(r1 < 130) & (g1 < 130) & (b1 < 130)] = 255
-
-        # Apply mask to the image array: TODO: Remove
-        # self.array = cv2.bitwise_and(self.array, self.array, mask=self.mask)
 
     def __repr__(self):
         """Display this timed photo as text for use in the console."""
@@ -69,9 +72,8 @@ class PhotoComparer:
     """2 timed photos which can be used to find ISS speed."""
     def __init__(self, photo1: TimedPhoto, photo2: TimedPhoto):
         """Create a photo comparer, assuming that photo1 was taken before photo2."""
-        self.photo1 = photo1
-        self.photo2 = photo2
-        # self.distance = None
+        self.photo1 = photo1 # Taken first
+        self.photo2 = photo2 # Taken second
 
     def getDistance(self):
         """Use ORB and brute-force matching computer vision algorithms to get the distance between the 2 photos in pixels.
@@ -84,14 +86,14 @@ class PhotoComparer:
         bruteForce = cv2.BFMatcher.create(BF_MATCHER_TYPE, crossCheck=True)
 
         # Get information about the features visible
-        keypoints1, descriptors1 = orb.detectAndCompute(self.photo1.array, self.photo1.mask) # (r1 < 200) | (g1 < 200) | (b1 < 200)) # Ignore clouds in the mask.
-        keypoints2, descriptors2 = orb.detectAndCompute(self.photo2.array, self.photo2.mask)
+        keypoints1, descriptors1 = orb.detectAndCompute(self.photo1.array, self.photo1.mask) # Ignore clouds in the mask.
+        keypoints2, descriptors2 = orb.detectAndCompute(self.photo2.array, self.photo2.mask) # Ignore clouds in the mask.
 
         # Get matches across the 2 photos between similar features.
         matches = bruteForce.match(descriptors1, descriptors2)
 
         # Return the mean distance between the photos for all of the matches
-        # Create a 1D numpy array to store the distances, with the same length as the number of matches.
+        # Create a one-dimensional numpy array to store the distances, with the same length as the number of matches.
         distances = np.zeros((len(matches),))
 
         for i in range(len(matches)):
@@ -100,8 +102,7 @@ class PhotoComparer:
             (x2, y2) = keypoints2[matches[i].trainIdx].pt
             distances[i] = ((x2-x1)**2 + (y2-y1)**2)**0.5 # match.distance
 
-        # Mean distance = sum of distances / num matches.
-        print("distances", distances, "len(matches)", len(matches))
+        # Return the median average distance between matches = distance between photos
         # If there are 0 matches, a NaN (not-a-number) value will be returned, effectively ignoring this frame.
         if len(distances) == 0:
             return np.nan
@@ -110,23 +111,17 @@ class PhotoComparer:
     def getDistanceKilometres(self):
         """Get the distance between the two photos in KM"""
         distance = self.getDistance()
-        print("Distance (px):", distance)
         return distance * GROUND_SAMPLE_DISTANCE
 
     def getTimeDifference(self):
-        """Return the difference in time taken between the two photos in seconds."""
+        """Return the difference in time taken between the two photos as a timestamp."""
         return self.photo2.time - self.photo1.time
 
     def getSpeed(self):
         """Get the speed of the ISS between the 2 photos in kilometres per second."""
-        # return self.getDistanceKilometres() / self.getTimeDifference()
-
-        distance = self.getDistanceKilometres()
-        print("Distance (km):", distance)
-        time = self.getTimeDifference()
-        print("Time Difference (s):", time)
+        distance = self.getDistanceKilometres() # in km
+        time = self.getTimeDifference() # in seconds, as calculating with a timestamp
         speed = distance/time
-        print("Speed (km/s):", speed)
         return speed
 
     def __repr__(self):
@@ -147,19 +142,15 @@ def writeResult(speedKmps: float):
     with open(RESULT_FILE_PATH, 'w') as file:
         file.write(speedKmpsFormatted)
 
-    print(f"Speed {speedKmpsFormatted} written to {RESULT_FILE_PATH}")
-
 """Main entrypoint
-Inspired by https://projects.raspberrypi.org/en/projects/mission-space-lab-creator-guide/3"""
-print("Starting")
+Inspired by https://projects.raspberrypi.org/en/projects/mission-space-lab-creator-guide/3."""
 
-# TODO: test + commit the below code; add try/catch
 # Create a variable to store the start time of the whole program.
 startTime = datetime.now()
 # Create a variable to store the start time of the loop.
 startLoopTime = datetime.now()
 
-# Run until a photo is successfully captured or the time runs out.
+# Try to take a photo until a photo is successfully captured or the experiment time runs out.
 validPhoto = False
 while(not validPhoto and datetime.now() < startLoopTime + EXPERIMENT_DURATION_CONSERVATIVE):
     try:
@@ -178,9 +169,8 @@ if(validPhoto):
     # The speeds calculated for each iteration of the loop as a list
     speeds = []
 
-    # Run the main loop for 1 minute, while the current time is less than 1 minute after the start time.
+    # Run the main loop for the experiment duration, while the current time is less than the experiment duration after the start time.
     while startLoopTime < startTime + EXPERIMENT_DURATION_CONSERVATIVE:
-        print("Next Iteration")
         try:
             thisPhoto = TimedPhoto(piCam)
             comparer = PhotoComparer(lastPhoto, thisPhoto)
@@ -197,14 +187,13 @@ if(validPhoto):
             pass # Don't worry about errors such as no-matches-found error.
 
         startLoopTime = datetime.now()
-    # Out of the loop — stopping
+    # Out of the loop - stopping
 
     # Speeds recorded for each frame are saved in a numpy array.
     speeds = np.array(speeds, dtype=float)
     # Get median speed to write to file, ignoring not-a-number frames where no matches were found.
     medianSpeed = np.nanmedian(speeds)
 
-    print("median", medianSpeed, "mean", np.nanmean(speeds))
     writeResult(medianSpeed)
 
 """Close open resources and clean up"""
